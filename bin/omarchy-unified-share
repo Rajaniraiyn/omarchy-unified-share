@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+self_path=$(realpath "$0")
+
 find_core() {
   if command -v unified-share >/dev/null 2>&1; then
     command -v unified-share
@@ -20,10 +22,12 @@ notify() {
 }
 
 pick_paths() {
-  local mode=$1 picked status=0
+  local mode=$1 path picked status=0
   shift
   if (($# > 0)); then
-    printf '%s\n' "$@"
+    for path in "$@"; do
+      realpath -- "$path"
+    done
     return
   fi
   case "$mode" in
@@ -52,7 +56,7 @@ pick_paths() {
 stage_directories() {
   local route=$1 path cache_dir archive
   shift
-  if [[ $route == localsend ]]; then
+  if [[ $route == local-send ]]; then
     printf '%s\n' "$@"
     return
   fi
@@ -97,52 +101,106 @@ send_transfer() {
   url=$(jq -r '.url // empty' <<<"$result")
   if [[ -n $url ]]; then
     printf '%s' "$url" | wl-copy
-    notify "Browser link copied" "Open Unified Share from the launcher to display its QR code."
+    notify "Sharing link copied" "Paste the private link on a device connected to this Wi-Fi."
   else
     notify "Shared" "$message"
   fi
 }
 
+choose_quick_share_device() {
+  local core discovery selection label device_id device_name index
+  local -a paths=("$@") options device_ids device_names option_labels
+  core=$(find_core) || { notify "Unified Share unavailable" "Build or install the Unified Share core first."; exit 1; }
+
+  while true; do
+    notify "Quick Share" "Looking for nearby Android and Windows devices…"
+    discovery=$("$core" discover --timeout-seconds 4 --json 2>/dev/null || printf '%s' '{"devices":[]}' )
+    options=()
+    device_ids=()
+    device_names=()
+    option_labels=()
+
+    while IFS=$'\t' read -r device_id device_name; do
+      [[ -n $device_id ]] || continue
+      if [[ $device_name == Android_* ]]; then
+        label="Android device"
+      else
+        label=$device_name
+      fi
+      options+=("󰀲"$'\t'"$label"$'\t'"Quick Share · $device_name")
+      option_labels+=("$label")
+      device_ids+=("$device_id")
+      device_names+=("$device_name")
+    done < <(jq -r '.devices[]? | [.id, .name] | @tsv' <<<"$discovery")
+
+    if ((${#device_ids[@]} == 0)); then
+      selection=$(omarchy-menu-select "No nearby devices found" \
+        "󰑐"$'\t'"Scan again"$'\t'"Make the receiving device visible, then retry" \
+        "󰌷"$'\t'"Copy sharing link"$'\t'"Works in a browser on this Wi-Fi" \
+        "󰁍"$'\t'"Back"$'\t'"Choose another sharing method" \
+        -- --width 590) || return 1
+      case ${selection%%$'\t'*} in
+        "Scan again") continue ;;
+        "Copy sharing link")
+          send_transfer browser "" "" "${paths[@]}"
+          return
+          ;;
+        *) return 1 ;;
+      esac
+    fi
+
+    selection=$(omarchy-menu-select "Choose a nearby device" "${options[@]}" \
+      "󰑐"$'\t'"Scan again"$'\t'"Refresh the nearby-device list" \
+      "󰁍"$'\t'"Back"$'\t'"Choose another sharing method" \
+      -- --width 590) || return 1
+    label=${selection%%$'\t'*}
+    [[ $label == "Scan again" ]] && continue
+    [[ $label == "Back" ]] && return 1
+
+    for index in "${!option_labels[@]}"; do
+      if [[ ${option_labels[$index]} == "$label" ]]; then
+        systemd-run --user --quiet --collect \
+          "$self_path" send quick-share "${device_ids[$index]}" "${device_names[$index]}" "${paths[@]}"
+        return
+      fi
+    done
+    return 1
+  done
+}
+
 choose_route() {
   local mode=$1
   shift
-  local core discovery selection label route device_id device_name
-  local -a paths=("$@") options device_ids device_names option_labels
-  core=$(find_core) || { notify "Unified Share unavailable" "Build or install the Unified Share core first."; exit 1; }
-  discovery=$("$core" discover --timeout-seconds 5 --json 2>/dev/null || printf '%s' '{"devices":[]}')
-  while IFS=$'\t' read -r device_id device_name; do
-    [[ -n $device_id ]] || continue
-    label="Quick Share — $device_name"
-    options+=("󰀲"$'\t'"$label"$'\t'"Android / Windows")
-    option_labels+=("$label")
-    device_ids+=("$device_id")
-    device_names+=("$device_name")
-  done < <(jq -r '.devices[]? | [.id, .name] | @tsv' <<<"$discovery")
-  options+=("󰖟"$'\t'"Browser link"$'\t'"Any device on this Wi-Fi")
-  options+=("󰒍"$'\t'"LocalSend"$'\t'"Installed fallback")
-  selection=$(omarchy-menu-select "Share ${#paths[@]} item(s)" "${options[@]}" -- --width 560) || exit 0
-  label=${selection%%$'\t'*}
-  route=""
-  device_id=""
-  device_name=""
-  if [[ $label == "Browser link" ]]; then
-    route=browser
-  elif [[ $label == "LocalSend" ]]; then
-    route=localsend
+  local selection label count_label
+  local -a paths=("$@")
+  if ((${#paths[@]} == 1)); then
+    count_label="1 item"
   else
-    local index
-    for index in "${!option_labels[@]}"; do
-      if [[ ${option_labels[$index]} == "$label" ]]; then
-        route=quick-share
-        device_id=${device_ids[$index]}
-        device_name=${device_names[$index]}
-        break
-      fi
-    done
+    count_label="${#paths[@]} items"
   fi
-  [[ -n $route ]] || exit 0
-  systemd-run --user --quiet --collect \
-    "$0" send "$route" "$device_id" "$device_name" "${paths[@]}"
+
+  while true; do
+    selection=$(omarchy-menu-select "Share $count_label" \
+      "󰀲"$'\t'"Nearby device"$'\t'"Android and Windows Quick Share" \
+      "󰌷"$'\t'"Copy sharing link"$'\t'"Any browser on the same Wi-Fi" \
+      "󰒍"$'\t'"LocalSend fallback"$'\t'"Use the installed LocalSend app" \
+      -- --width 590) || exit 0
+    label=${selection%%$'\t'*}
+    case $label in
+      "Nearby device")
+        choose_quick_share_device "${paths[@]}" && return
+        ;;
+      "Copy sharing link")
+        send_transfer browser "" "" "${paths[@]}"
+        return
+        ;;
+      "LocalSend fallback")
+        systemd-run --user --quiet --collect \
+          "$self_path" send local-send "" "" "${paths[@]}"
+        return
+        ;;
+    esac
+  done
 }
 
 show_history() {

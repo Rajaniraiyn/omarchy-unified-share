@@ -25,7 +25,8 @@ The development helper also discovers `~/Projects/unified-share/target/{release,
 
 - Replaces Omarchy's LocalSend-only Share actions with a native route/recipient chooser for files, folders, and clipboard text.
 - Adds a Nautilus `Share…` context action while retaining LocalSend as a fallback provider.
-- Shows only discovered Quick Share recipients; actions never silently run without a target.
+- Opens the sharing-method chooser immediately; Quick Share discovery runs only after selecting **Nearby device** and shows explicit scanning, retry, and back states.
+- Offers a private same-Wi-Fi browser link and LocalSend as clearly labelled fallbacks when a native recipient is unavailable.
 - Stages folders as temporary ZIP files for file-only routes and passes folders directly to LocalSend.
 - Keeps the shell plugin on demand as a centered device-name and private-history surface instead of a permanent bar widget.
 - Runs discovery and transfers only after an explicit share action; no additional sharing daemon stays resident.
