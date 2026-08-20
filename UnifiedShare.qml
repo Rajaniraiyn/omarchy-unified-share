@@ -26,7 +26,6 @@ Panel {
   }
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color dim: Color.muted
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property bool busy: loading || actionProc.running
   readonly property int readyCount: Model.readyCount(adapters)
@@ -248,7 +247,8 @@ Panel {
 
         Text {
           text: "AVAILABLE ROUTES"
-          color: root.dim
+          color: root.foreground
+          opacity: 0.65
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
@@ -292,7 +292,8 @@ Panel {
                   Text {
                     width: parent.width
                     text: String(modelData.detail || "")
-                    color: root.dim
+                    color: root.foreground
+                    opacity: 0.65
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
                     elide: Text.ElideRight
