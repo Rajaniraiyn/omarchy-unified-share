@@ -114,6 +114,48 @@ Panel {
     coreVersion = status.version
   }
 
+  function handleActionLine(raw) {
+    var line = String(raw || "").trim()
+    if (line === "") return
+    actionProc.resultText += line + "\n"
+    try {
+      var payload = JSON.parse(line)
+      if (payload.event === "picker_complete") {
+        reopenAfterAction = false
+        noticeText = route === "quick-share"
+          ? "File selected — waiting for your Android device"
+          : "File selected — preparing share"
+        root.open()
+      } else if (payload.ok) {
+        noticeText = payload.message || "Share opened"
+        if (payload.url && payload.transfer_id) {
+          shareUrl = String(payload.url)
+          transferId = String(payload.transfer_id)
+          expiresAtUnix = Number(payload.expires_at_unix || 0)
+          qrPath = ""
+          qrProc.resultText = ""
+          qrProc.command = [helperPath, "qr-code", shareUrl, transferId]
+          qrProc.running = true
+        }
+      } else if (payload.message) {
+        errorText = payload.message
+      }
+    } catch (error) {
+      // Non-JSON stdout is retained for diagnostics and handled on exit.
+    }
+  }
+
+  function handleActionError(raw) {
+    var line = String(raw || "").trim()
+    if (line === "") return
+    actionProc.errorResult += (actionProc.errorResult === "" ? "" : "\n") + line
+    var prefix = "Quick Share confirmation code: "
+    if (line.indexOf(prefix) === 0) {
+      noticeText = "Confirm code " + line.slice(prefix.length) + " on both devices"
+      root.open()
+    }
+  }
+
   onOpenedChanged: if (opened) refresh()
 
   IpcHandler {
@@ -159,35 +201,9 @@ Panel {
     id: actionProc
     property string resultText: ""
     property string errorResult: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: actionProc.resultText = text
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: actionProc.errorResult = text.trim()
-    }
+    stdout: SplitParser { onRead: function(line) { root.handleActionLine(line) } }
+    stderr: SplitParser { onRead: function(line) { root.handleActionError(line) } }
     onExited: function(code) {
-      if (actionProc.resultText !== "") {
-        try {
-          var payload = JSON.parse(actionProc.resultText)
-          if (payload.ok) {
-            root.noticeText = payload.message || "Share opened"
-            if (payload.url && payload.transfer_id) {
-              root.shareUrl = String(payload.url)
-              root.transferId = String(payload.transfer_id)
-              root.expiresAtUnix = Number(payload.expires_at_unix || 0)
-              root.qrPath = ""
-              qrProc.resultText = ""
-              qrProc.command = [root.helperPath, "qr-code", root.shareUrl, root.transferId]
-              qrProc.running = true
-            }
-          }
-          else root.errorText = payload.message || "Could not share"
-        } catch (error) {
-          if (code !== 0) root.errorText = "Invalid response from Unified Share"
-        }
-      }
       if (code !== 0 && root.errorText === "" && actionProc.errorResult !== "")
         root.errorText = actionProc.errorResult
       if (root.reopenAfterAction) {

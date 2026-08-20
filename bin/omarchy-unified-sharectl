@@ -61,6 +61,7 @@ case "$command_name" in
     fi
     [[ -n $picked ]] || exit 0
     readarray -t paths <<<"$picked"
+    printf '%s\n' '{"event":"picker_complete"}'
     share_args=(share --json --via "$route")
     if [[ $route == quick-share ]]; then
       [[ -n $device_id ]] || exit 2
