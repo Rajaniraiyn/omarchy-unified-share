@@ -127,6 +127,11 @@ Panel {
     function shareFiles(): void { root.runAction("share-file") }
     function shareClipboard(): void { root.runAction("share-clipboard") }
     function stopTransfer(): void { root.stopTransfer() }
+    function showQuickShare(): void {
+      root.route = "quick-share"
+      root.open()
+      root.scanQuickShare()
+    }
   }
 
   Process {
