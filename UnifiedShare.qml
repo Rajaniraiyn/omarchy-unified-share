@@ -117,7 +117,8 @@ Item {
     BorderSurface {
       anchors.centerIn: parent
       width: Math.min(760, window.width - Style.space(32))
-      height: Math.min(540, window.height - Style.space(32))
+      height: Math.min(root.historyEntries.length === 0 ? 340 : 540,
+        window.height - Style.space(32))
       color: Color.popups.background
       borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
       radius: Style.cornerRadius
