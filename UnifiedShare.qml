@@ -26,7 +26,7 @@ Panel {
   }
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color accent: bar ? bar.accent : Color.accent
+  readonly property color accent: Color.accent
   readonly property color dim: Qt.darker(foreground, 1.45)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property bool busy: loading || actionProc.running
@@ -316,4 +316,3 @@ Panel {
     }
   }
 }
-
