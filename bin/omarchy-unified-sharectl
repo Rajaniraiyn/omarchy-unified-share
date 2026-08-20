@@ -33,10 +33,15 @@ case "$command_name" in
   status)
     exec "$core" status --json
     ;;
+  discover)
+    exec "$core" discover --timeout-seconds 8 --json
+    ;;
   share-file|share-folder)
     route=${1:-browser}
+    device_id=${2:-}
+    device_name=${3:-Quick Share device}
     case "$route" in
-      browser|localsend|auto) ;;
+      browser|localsend|auto|quick-share) ;;
       *)
         printf '%s\n' '{"schema_version":1,"ok":false,"message":"Unknown sharing route"}'
         exit 2
@@ -56,12 +61,19 @@ case "$command_name" in
     fi
     [[ -n $picked ]] || exit 0
     readarray -t paths <<<"$picked"
-    exec "$core" share --json --via "$route" "${paths[@]}"
+    share_args=(share --json --via "$route")
+    if [[ $route == quick-share ]]; then
+      [[ -n $device_id ]] || exit 2
+      share_args+=(--device "$device_id" --device-name "$device_name")
+    fi
+    exec "$core" "${share_args[@]}" "${paths[@]}"
     ;;
   share-clipboard)
     route=${1:-browser}
+    device_id=${2:-}
+    device_name=${3:-Quick Share device}
     case "$route" in
-      browser|localsend|auto) ;;
+      browser|localsend|auto|quick-share) ;;
       *)
         printf '%s\n' '{"schema_version":1,"ok":false,"message":"Unknown sharing route"}'
         exit 2
@@ -73,7 +85,12 @@ case "$command_name" in
     find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null || true
     clipboard_file=$(mktemp --tmpdir="$cache_dir" clipboard.XXXXXX.txt)
     wl-paste >"$clipboard_file"
-    exec "$core" share --json --via "$route" "$clipboard_file"
+    share_args=(share --json --via "$route")
+    if [[ $route == quick-share ]]; then
+      [[ -n $device_id ]] || exit 2
+      share_args+=(--device "$device_id" --device-name "$device_name")
+    fi
+    exec "$core" "${share_args[@]}" "$clipboard_file"
     ;;
   qr-code)
     url=${1:-}

@@ -23,6 +23,10 @@ Panel {
   property string transferId: ""
   property string qrPath: ""
   property double expiresAtUnix: 0
+  property var quickDevices: []
+  property string selectedDeviceId: ""
+  property string selectedDeviceName: ""
+  property bool reopenAfterAction: false
 
   readonly property string helperPath: {
     var value = String(Qt.resolvedUrl("bin/omarchy-unified-sharectl"))
@@ -32,7 +36,7 @@ Panel {
   readonly property color foreground: Color.foreground
   readonly property color urgent: Color.urgent
   readonly property string fontFamily: Style.font.family
-  readonly property bool busy: loading || actionProc.running || stopProc.running
+  readonly property bool busy: loading || actionProc.running || stopProc.running || discoveryProc.running
   readonly property int readyCount: Model.readyCount(adapters)
 
   implicitWidth: button.implicitWidth
@@ -50,12 +54,31 @@ Panel {
 
   function runAction(action) {
     if (busy || readyCount === 0) return
+    if (route === "quick-share" && selectedDeviceId === "") {
+      errorText = "Select a Quick Share device first"
+      return
+    }
     errorText = ""
     noticeText = ""
     actionProc.resultText = ""
     actionProc.errorResult = ""
-    actionProc.command = [helperPath, action, route]
+    actionProc.command = [helperPath, action, route, selectedDeviceId, selectedDeviceName]
+    reopenAfterAction = action === "share-file" || action === "share-folder"
+    if (reopenAfterAction) root.close()
     actionProc.running = true
+  }
+
+  function scanQuickShare() {
+    if (discoveryProc.running) return
+    errorText = ""
+    noticeText = ""
+    quickDevices = []
+    selectedDeviceId = ""
+    selectedDeviceName = ""
+    discoveryProc.resultText = ""
+    discoveryProc.errorResult = ""
+    discoveryProc.command = [helperPath, "discover"]
+    discoveryProc.running = true
   }
 
   function clearTransfer() {
@@ -162,6 +185,41 @@ Panel {
       }
       if (code !== 0 && root.errorText === "" && actionProc.errorResult !== "")
         root.errorText = actionProc.errorResult
+      if (root.reopenAfterAction) {
+        root.reopenAfterAction = false
+        root.open()
+      }
+    }
+  }
+
+  Process {
+    id: discoveryProc
+    property string resultText: ""
+    property string errorResult: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: discoveryProc.resultText = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: discoveryProc.errorResult = text.trim()
+    }
+    onExited: function(code) {
+      if (code === 0 && discoveryProc.resultText !== "") {
+        try {
+          var payload = JSON.parse(discoveryProc.resultText)
+          root.quickDevices = payload.devices || []
+          if (root.quickDevices.length === 1) {
+            root.selectedDeviceId = String(root.quickDevices[0].id)
+            root.selectedDeviceName = String(root.quickDevices[0].name)
+          }
+        } catch (error) {
+          root.errorText = "Could not read Quick Share devices"
+        }
+      } else if (code !== 0) {
+        root.errorText = discoveryProc.errorResult !== ""
+          ? discoveryProc.errorResult : "Quick Share scan failed"
+      }
     }
   }
 
@@ -292,6 +350,7 @@ Panel {
 
           ButtonGroup {
             options: [
+              { value: "quick-share", label: "Quick Share", tooltip: "Android and Windows Quick Share" },
               { value: "browser", label: "Browser / QR", tooltip: "Works on any device on this LAN" },
               { value: "localsend", label: "LocalSend", tooltip: "Use the installed LocalSend app" }
             ]
@@ -299,7 +358,83 @@ Panel {
             foreground: root.foreground
             fontFamily: root.fontFamily
             enabled: !root.busy
-            onChanged: function(value) { root.route = value }
+            onChanged: function(value) {
+              root.route = value
+              if (value === "quick-share") root.scanQuickShare()
+            }
+          }
+        }
+
+        BorderSurface {
+          width: parent.width
+          visible: root.route === "quick-share"
+          implicitHeight: quickDeviceColumn.implicitHeight + Style.space(20)
+          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+          borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
+          radius: Style.cornerRadius
+
+          Column {
+            id: quickDeviceColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: Style.space(10)
+            spacing: Style.space(8)
+
+            RowLayout {
+              width: parent.width
+
+              Text {
+                Layout.fillWidth: true
+                text: discoveryProc.running ? "SCANNING FOR DEVICES…" : "QUICK SHARE DEVICES"
+                color: root.foreground
+                opacity: 0.7
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.0
+              }
+
+              Button {
+                text: discoveryProc.running ? "Scanning…" : "Scan again"
+                iconText: "󰑐"
+                iconSpinning: discoveryProc.running
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                enabled: !root.busy
+                onClicked: root.scanQuickShare()
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: !discoveryProc.running && root.quickDevices.length === 0
+              text: "No device found. Turn on Bluetooth, keep both devices on the same Wi-Fi, and set Android Quick Share visibility to Everyone."
+              color: root.foreground
+              opacity: 0.65
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+              model: root.quickDevices
+
+              Button {
+                required property var modelData
+                width: quickDeviceColumn.width
+                text: String(modelData.name || "Unknown device") + "  ·  " + String(modelData.device_type || "device")
+                selected: root.selectedDeviceId === String(modelData.id)
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: {
+                  root.selectedDeviceId = String(modelData.id)
+                  root.selectedDeviceName = String(modelData.name || "Quick Share device")
+                }
+              }
+            }
           }
         }
 
@@ -314,6 +449,7 @@ Panel {
             foreground: root.foreground
             fontFamily: root.fontFamily
             enabled: !root.busy && root.readyCount > 0
+              && (root.route !== "quick-share" || root.selectedDeviceId !== "")
             onClicked: root.runAction("share-file")
           }
           Button {
@@ -322,8 +458,8 @@ Panel {
             bordered: true
             foreground: root.foreground
             fontFamily: root.fontFamily
-            enabled: !root.busy && root.readyCount > 0 && root.route !== "browser"
-            tooltipText: root.route === "browser"
+            enabled: !root.busy && root.readyCount > 0 && root.route === "localsend"
+            tooltipText: root.route !== "localsend"
               ? "Choose LocalSend to share a folder" : "Share a folder"
             onClicked: root.runAction("share-folder")
           }
@@ -334,6 +470,7 @@ Panel {
             foreground: root.foreground
             fontFamily: root.fontFamily
             enabled: !root.busy && root.readyCount > 0
+              && (root.route !== "quick-share" || root.selectedDeviceId !== "")
             onClicked: root.runAction("share-clipboard")
           }
         }
@@ -461,7 +598,7 @@ Panel {
         }
 
         Text {
-          visible: root.shareUrl === ""
+          visible: root.shareUrl === "" && root.route !== "quick-share"
           text: "AVAILABLE ROUTES"
           color: root.foreground
           opacity: 0.65
@@ -472,7 +609,7 @@ Panel {
         }
 
         Column {
-          visible: root.shareUrl === ""
+          visible: root.shareUrl === "" && root.route !== "quick-share"
           width: parent.width
           spacing: Style.space(8)
 
