@@ -1,6 +1,6 @@
 # Omarchy Unified Share
 
-A native Omarchy shell panel for [Unified Share](https://github.com/Rajaniraiyn/unified-share).
+A native Omarchy Share provider and optional history/settings panel for [Unified Share](https://github.com/Rajaniraiyn/unified-share).
 
 The plugin is intentionally thin. It uses Omarchy's file picker and shell UI components, reads the core's versioned JSON status, and launches sharing actions on demand. It does not run a second discovery daemon or implement network protocols in QML.
 
@@ -23,12 +23,12 @@ The development helper also discovers `~/Projects/unified-share/target/{release,
 
 ## Current behavior
 
-- Opens on Quick Share and scans for visible Android or Windows recipients.
-- Keeps Browser / QR and LocalSend as explicit fallback routes instead of mixing their state into the main flow.
-- Closes before the native file picker appears, then reopens as soon as selection completes.
-- Streams the Quick Share confirmation code into the panel while consent is pending.
-- Creates private, expiring Browser / QR links and can stop an active link early.
-- Runs discovery and transfer work only on demand; the panel does not add a background sharing daemon.
+- Replaces Omarchy's LocalSend-only Share actions with a native route/recipient chooser for files, folders, and clipboard text.
+- Adds a Nautilus `Share…` context action while retaining LocalSend as a fallback provider.
+- Shows only discovered Quick Share recipients; actions never silently run without a target.
+- Stages folders as temporary ZIP files for file-only routes and passes folders directly to LocalSend.
+- Keeps the shell plugin on demand as a centered device-name and private-history surface instead of a permanent bar widget.
+- Runs discovery and transfers only after an explicit share action; no additional sharing daemon stays resident.
 
 ## License
 

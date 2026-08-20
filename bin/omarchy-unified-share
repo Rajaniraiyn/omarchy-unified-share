@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+find_core() {
+  if command -v unified-share >/dev/null 2>&1; then
+    command -v unified-share
+    return
+  fi
+  local candidate
+  for candidate in \
+    "$HOME/Projects/unified-share/target/release/unified-share" \
+    "$HOME/Projects/unified-share/target/debug/unified-share"; do
+    [[ -x $candidate ]] && { printf '%s\n' "$candidate"; return; }
+  done
+  return 1
+}
+
+notify() {
+  omarchy-notification-send -g "" "$1" "$2" >/dev/null 2>&1 || true
+}
+
+pick_paths() {
+  local mode=$1 picked status=0
+  shift
+  if (($# > 0)); then
+    printf '%s\n' "$@"
+    return
+  fi
+  case "$mode" in
+    clipboard)
+      local cache_dir clipboard_file
+      cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/unified-share/clipboard
+      mkdir -p "$cache_dir"
+      find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null || true
+      clipboard_file=$(mktemp --tmpdir="$cache_dir" clipboard.XXXXXX.txt)
+      wl-paste >"$clipboard_file"
+      printf '%s\n' "$clipboard_file"
+      ;;
+    folder)
+      picked=$(omarchy-file-select --title "Share folder" --directory) || status=$?
+      ((status <= 1)) || return "$status"
+      [[ -n $picked ]] && printf '%s\n' "$picked"
+      ;;
+    *)
+      picked=$(omarchy-file-select --title "Share files" --multiple) || status=$?
+      ((status <= 1)) || return "$status"
+      [[ -n $picked ]] && printf '%s\n' "$picked"
+      ;;
+  esac
+}
+
+stage_directories() {
+  local route=$1 path cache_dir archive
+  shift
+  if [[ $route == localsend ]]; then
+    printf '%s\n' "$@"
+    return
+  fi
+  cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/unified-share/staged
+  mkdir -p "$cache_dir"
+  find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null || true
+  for path in "$@"; do
+    if [[ -d $path ]]; then
+      archive=$(mktemp --tmpdir="$cache_dir" "$(basename "$path").XXXXXX.zip")
+      rm -f -- "$archive"
+      (cd "$(dirname "$path")" && zip -qr "$archive" "$(basename "$path")")
+      printf '%s\n' "$archive"
+    else
+      printf '%s\n' "$path"
+    fi
+  done
+}
+
+send_transfer() {
+  local route=$1 device_id=$2 device_name=$3
+  shift 3
+  local core result status=0 message url
+  core=$(find_core) || { notify "Unified Share unavailable" "Build or install the Unified Share core first."; exit 1; }
+  local -a paths=("$@") staged share_args
+  mapfile -t staged < <(stage_directories "$route" "${paths[@]}")
+  share_args=(share --json --via "$route")
+  if [[ $route == quick-share ]]; then
+    share_args+=(--device "$device_id" --device-name "$device_name")
+  fi
+  result=$("$core" "${share_args[@]}" "${staged[@]}" 2> >(
+    while IFS= read -r line; do
+      if [[ $line == "Quick Share confirmation code: "* ]]; then
+        notify "Confirm Quick Share" "Code ${line#Quick Share confirmation code: }"
+      fi
+    done
+  )) || status=$?
+  if ((status != 0)); then
+    notify "Share failed" "${result:-The recipient did not complete the transfer.}"
+    exit "$status"
+  fi
+  message=$(jq -r '.message // "Transfer completed"' <<<"$result")
+  url=$(jq -r '.url // empty' <<<"$result")
+  if [[ -n $url ]]; then
+    printf '%s' "$url" | wl-copy
+    notify "Browser link copied" "Open Unified Share from the launcher to display its QR code."
+  else
+    notify "Shared" "$message"
+  fi
+}
+
+choose_route() {
+  local mode=$1
+  shift
+  local core discovery selection label route device_id device_name
+  local -a paths=("$@") options device_ids device_names option_labels
+  core=$(find_core) || { notify "Unified Share unavailable" "Build or install the Unified Share core first."; exit 1; }
+  discovery=$("$core" discover --timeout-seconds 5 --json 2>/dev/null || printf '%s' '{"devices":[]}')
+  while IFS=$'\t' read -r device_id device_name; do
+    [[ -n $device_id ]] || continue
+    label="Quick Share — $device_name"
+    options+=("󰀲"$'\t'"$label"$'\t'"Android / Windows")
+    option_labels+=("$label")
+    device_ids+=("$device_id")
+    device_names+=("$device_name")
+  done < <(jq -r '.devices[]? | [.id, .name] | @tsv' <<<"$discovery")
+  options+=("󰖟"$'\t'"Browser link"$'\t'"Any device on this Wi-Fi")
+  options+=("󰒍"$'\t'"LocalSend"$'\t'"Installed fallback")
+  selection=$(omarchy-menu-select "Share ${#paths[@]} item(s)" "${options[@]}" -- --width 560) || exit 0
+  label=${selection%%$'\t'*}
+  route=""
+  device_id=""
+  device_name=""
+  if [[ $label == "Browser link" ]]; then
+    route=browser
+  elif [[ $label == "LocalSend" ]]; then
+    route=localsend
+  else
+    local index
+    for index in "${!option_labels[@]}"; do
+      if [[ ${option_labels[$index]} == "$label" ]]; then
+        route=quick-share
+        device_id=${device_ids[$index]}
+        device_name=${device_names[$index]}
+        break
+      fi
+    done
+  fi
+  [[ -n $route ]] || exit 0
+  systemd-run --user --quiet --collect \
+    "$0" send "$route" "$device_id" "$device_name" "${paths[@]}"
+}
+
+show_history() {
+  local core payload selection
+  local -a options
+  core=$(find_core) || exit 1
+  payload=$("$core" history --limit 20 --json)
+  while IFS=$'\t' read -r outcome target count message; do
+    options+=("󰋚"$'\t'"$target · $count item(s)"$'\t'"$outcome · $message")
+  done < <(jq -r '.entries[]? | [.outcome, .target, .item_count, .message] | @tsv' <<<"$payload")
+  options+=("󰆴"$'\t'"Clear history"$'\t'"Remove local transfer records")
+  selection=$(omarchy-menu-select "Transfer history" "${options[@]}" -- --width 620) || exit 0
+  if [[ ${selection%%$'\t'*} == "Clear history" ]]; then
+    "$core" history --clear --json >/dev/null
+    notify "Transfer history" "History cleared"
+  fi
+}
+
+set_device_name() {
+  local core current value
+  core=$(find_core) || exit 1
+  current=$("$core" config --json | jq -r '.device_name')
+  value=$(omarchy-menu-input "Device name (currently: $current)" --width 520) || exit 0
+  "$core" config --device-name "$value" --json >/dev/null
+  notify "Unified Share" "This computer now appears as $value"
+}
+
+command_name=${1:-share}
+shift || true
+case "$command_name" in
+  share)
+    mode=${1:-file}
+    shift || true
+    mapfile -t selected_paths < <(pick_paths "$mode" "$@")
+    ((${#selected_paths[@]} > 0)) || exit 0
+    choose_route "$mode" "${selected_paths[@]}"
+    ;;
+  send)
+    send_transfer "$@"
+    ;;
+  history)
+    show_history
+    ;;
+  device-name)
+    set_device_name
+    ;;
+  *)
+    printf 'Usage: %s <share|send|history|device-name>\n' "$0" >&2
+    exit 2
+    ;;
+esac

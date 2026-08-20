@@ -4,633 +4,236 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
-import "Model.js" as Model
 
-Panel {
+Item {
   id: root
 
-  moduleName: "rajaniraiyn.unified-share"
-  ipcTarget: "rajaniraiyn.unified-share"
-  manageIpc: false
-
-  property var adapters: []
+  property var shell: null
+  property var manifest: null
+  property bool opened: false
+  property string deviceName: ""
   property string coreVersion: ""
+  property var historyEntries: []
   property string errorText: ""
-  property string noticeText: ""
   property bool loading: false
-  property string route: "quick-share"
-  property string shareUrl: ""
-  property string transferId: ""
-  property string qrPath: ""
-  property double expiresAtUnix: 0
-  property var quickDevices: []
-  property string selectedDeviceId: ""
-  property string selectedDeviceName: ""
-  property bool reopenAfterAction: false
 
   readonly property string helperPath: {
     var value = String(Qt.resolvedUrl("bin/omarchy-unified-sharectl"))
     if (value.indexOf("file://") === 0) value = value.slice(7)
     return decodeURIComponent(value)
   }
-  readonly property color foreground: Color.foreground
+  readonly property string providerPath: {
+    var value = String(Qt.resolvedUrl("bin/omarchy-unified-share"))
+    if (value.indexOf("file://") === 0) value = value.slice(7)
+    return decodeURIComponent(value)
+  }
+  readonly property color foreground: Color.popups.text
   readonly property color urgent: Color.urgent
   readonly property string fontFamily: Style.font.family
-  readonly property bool busy: loading || actionProc.running || stopProc.running || discoveryProc.running
-  readonly property int readyCount: Model.readyCount(adapters)
+  readonly property bool busy: statusProc.running || historyProc.running
 
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  function open(payloadJson) {
+    opened = true
+    refresh()
+    Qt.callLater(function() { if (root.opened) keyCatcher.forceActiveFocus() })
+  }
+
+  function close() { opened = false }
+
+  function dismiss() {
+    if (root.shell && typeof root.shell.hide === "function")
+      root.shell.hide((root.manifest && root.manifest.id) || "rajaniraiyn.unified-share")
+    else close()
+  }
 
   function refresh() {
-    if (statusProc.running) return
+    if (busy) return
     loading = true
     errorText = ""
     statusProc.resultText = ""
-    statusProc.errorResult = ""
     statusProc.command = [helperPath, "status"]
     statusProc.running = true
+    historyProc.resultText = ""
+    historyProc.command = [helperPath, "history"]
+    historyProc.running = true
   }
 
-  function runAction(action) {
-    if (busy || readyCount === 0) return
-    if (route === "quick-share" && selectedDeviceId === "") {
-      errorText = "Select a Quick Share device first"
-      return
-    }
-    errorText = ""
-    noticeText = ""
-    actionProc.resultText = ""
-    actionProc.errorResult = ""
-    actionProc.command = [helperPath, action, route, selectedDeviceId, selectedDeviceName]
-    reopenAfterAction = action === "share-file" || action === "share-folder"
-    if (reopenAfterAction) root.close()
-    actionProc.running = true
-  }
-
-  function scanQuickShare() {
-    if (discoveryProc.running) return
-    errorText = ""
-    noticeText = ""
-    quickDevices = []
-    selectedDeviceId = ""
-    selectedDeviceName = ""
-    discoveryProc.resultText = ""
-    discoveryProc.errorResult = ""
-    discoveryProc.command = [helperPath, "discover"]
-    discoveryProc.running = true
-  }
-
-  function selectRoute(value) {
-    if (route === value) return
-    clearTransfer()
-    errorText = ""
-    noticeText = ""
-    route = value
-    if (value === "quick-share") scanQuickShare()
-  }
-
-  function clearTransfer() {
-    shareUrl = ""
-    transferId = ""
-    qrPath = ""
-    expiresAtUnix = 0
-  }
-
-  function stopTransfer() {
-    if (transferId === "" || stopProc.running) return
-    stopProc.resultText = ""
-    stopProc.errorResult = ""
-    stopProc.command = [helperPath, "stop-transfer", transferId]
-    stopProc.running = true
-  }
-
-  function copyLink() {
-    if (shareUrl === "") return
-    copyProc.command = [helperPath, "copy-link", shareUrl]
-    copyProc.running = true
-    noticeText = "Link copied"
-  }
-
-  function updateStatus(raw) {
-    var status = Model.parseStatus(raw)
-    if (!status.ok) {
-      adapters = []
-      errorText = "Could not read Unified Share status"
-      return
-    }
-    adapters = status.adapters
-    coreVersion = status.version
-  }
-
-  function handleActionLine(raw) {
-    var line = String(raw || "").trim()
-    if (line === "") return
-    actionProc.resultText += line + "\n"
-    try {
-      var payload = JSON.parse(line)
-      if (payload.event === "picker_complete") {
-        reopenAfterAction = false
-        noticeText = route === "quick-share"
-          ? "File selected — waiting for your Android device"
-          : "File selected — preparing share"
-        root.open()
-      } else if (payload.ok) {
-        noticeText = payload.message || "Share opened"
-        if (payload.url && payload.transfer_id) {
-          shareUrl = String(payload.url)
-          transferId = String(payload.transfer_id)
-          expiresAtUnix = Number(payload.expires_at_unix || 0)
-          qrPath = ""
-          qrProc.resultText = ""
-          qrProc.command = [helperPath, "qr-code", shareUrl, transferId]
-          qrProc.running = true
-        }
-      } else if (payload.message) {
-        errorText = payload.message
-      }
-    } catch (error) {
-      // Non-JSON stdout is retained for diagnostics and handled on exit.
-    }
-  }
-
-  function handleActionError(raw) {
-    var line = String(raw || "").trim()
-    if (line === "") return
-    actionProc.errorResult += (actionProc.errorResult === "" ? "" : "\n") + line
-    var prefix = "Quick Share confirmation code: "
-    if (line.indexOf(prefix) === 0) {
-      noticeText = "Confirm code " + line.slice(prefix.length) + " on both devices"
-      root.open()
-    }
-  }
-
-  onOpenedChanged: if (opened) {
-    refresh()
-    if (route === "quick-share" && quickDevices.length === 0
-        && !discoveryProc.running && !actionProc.running)
-      scanQuickShare()
-  }
-
-  IpcHandler {
-    target: "rajaniraiyn.unified-share"
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function refresh(): void { root.refresh() }
-    function shareFiles(): void { root.runAction("share-file") }
-    function shareClipboard(): void { root.runAction("share-clipboard") }
-    function stopTransfer(): void { root.stopTransfer() }
-    function showQuickShare(): void {
-      root.route = "quick-share"
-      root.open()
-      root.scanQuickShare()
-    }
+  function launch(action) {
+    dismiss()
+    launchProc.command = [providerPath, "share", action]
+    launchProc.running = true
   }
 
   Process {
     id: statusProc
     property string resultText: ""
-    property string errorResult: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: statusProc.resultText = text
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: statusProc.errorResult = text.trim()
-    }
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: statusProc.resultText = text }
     onExited: function(code) {
-      if (statusProc.resultText !== "") root.updateStatus(statusProc.resultText)
-      if (code !== 0 && root.adapters.length === 0)
-        root.errorText = statusProc.errorResult !== ""
-          ? statusProc.errorResult : "Unified Share core is not installed"
-      root.loading = false
-    }
-  }
-
-  Process {
-    id: actionProc
-    property string resultText: ""
-    property string errorResult: ""
-    stdout: SplitParser { onRead: function(line) { root.handleActionLine(line) } }
-    stderr: SplitParser { onRead: function(line) { root.handleActionError(line) } }
-    onExited: function(code) {
-      if (code !== 0 && root.errorText === "" && actionProc.errorResult !== "")
-        root.errorText = actionProc.errorResult
-      if (root.reopenAfterAction) {
-        root.reopenAfterAction = false
-        root.open()
-      }
-    }
-  }
-
-  Process {
-    id: discoveryProc
-    property string resultText: ""
-    property string errorResult: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: discoveryProc.resultText = text
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: discoveryProc.errorResult = text.trim()
-    }
-    onExited: function(code) {
-      if (code === 0 && discoveryProc.resultText !== "") {
+      if (code !== 0) root.errorText = "Unified Share core is not installed"
+      else {
         try {
-          var payload = JSON.parse(discoveryProc.resultText)
-          root.quickDevices = payload.devices || []
-          if (root.quickDevices.length === 1) {
-            root.selectedDeviceId = String(root.quickDevices[0].id)
-            root.selectedDeviceName = String(root.quickDevices[0].name)
-          }
-        } catch (error) {
-          root.errorText = "Could not read Quick Share devices"
-        }
-      } else if (code !== 0) {
-        root.errorText = discoveryProc.errorResult !== ""
-          ? discoveryProc.errorResult : "Quick Share scan failed"
+          var payload = JSON.parse(statusProc.resultText)
+          root.deviceName = String(payload.device_name || "Omarchy")
+          root.coreVersion = String(payload.version || "")
+        } catch (error) { root.errorText = "Could not read Unified Share settings" }
       }
+      root.loading = statusProc.running || historyProc.running
     }
   }
 
-
   Process {
-    id: qrProc
+    id: historyProc
     property string resultText: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: qrProc.resultText = text.trim()
-    }
-    onExited: function(code) {
-      if (code === 0) root.qrPath = qrProc.resultText
-      else root.errorText = "The link is ready, but its QR code could not be generated"
-    }
-  }
-
-  Process {
-    id: copyProc
-  }
-
-  Process {
-    id: stopProc
-    property string resultText: ""
-    property string errorResult: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: stopProc.resultText = text
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: stopProc.errorResult = text.trim()
-    }
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: historyProc.resultText = text }
     onExited: function(code) {
       if (code === 0) {
-        root.clearTransfer()
-        root.noticeText = "Browser link stopped"
-      } else {
-        root.errorText = stopProc.errorResult !== ""
-          ? stopProc.errorResult : "Could not stop the browser link"
+        try { root.historyEntries = JSON.parse(historyProc.resultText).entries || [] }
+        catch (error) { root.historyEntries = [] }
       }
+      root.loading = statusProc.running || historyProc.running
     }
   }
 
-  BarIconButton {
-    id: button
-    anchors.fill: parent
-    bar: root.bar
-    text: "⇄"
-    tooltipText: "Unified Share"
-    onPressed: function(mouseButton) {
-      if (mouseButton === Qt.RightButton && root.opened) root.refresh()
-      else root.toggle()
-    }
-  }
+  Process { id: launchProc }
+  Process { id: settingsProc; onExited: function(code) { if (code === 0 && root.opened) root.refresh() } }
 
-  KeyboardPanel {
-    id: panel
-    anchorItem: button
-    owner: root
-    bar: root.bar
-    open: root.opened
-    focusTarget: keyCatcher
-    centerOnBar: true
-    contentWidth: panel.fittedContentWidth(Style.space(620))
-    contentHeight: panel.cappedContentHeight(
-      root.route === "quick-share" ? Style.space(360)
-        : (root.shareUrl !== "" ? Style.space(470) : Style.space(250)))
+  FloatingWindow {
+    id: window
+    title: "Omarchy Unified Share"
+    visible: root.opened
+    color: Color.popups.background
+    implicitWidth: 760
+    implicitHeight: 540
+    minimumSize: Qt.size(640, 460)
 
-    PanelKeyCatcher {
-      id: keyCatcher
+    onVisibleChanged: if (!visible && root.opened) root.dismiss()
+
+    FocusScope {
       anchors.fill: parent
-      onCloseRequested: root.close()
-      onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(text) {
-        if (text === "r" || text === "R") root.refresh()
-      }
+      focus: true
 
-      Column {
+      PanelKeyCatcher {
+        id: keyCatcher
         anchors.fill: parent
-        spacing: Style.space(14)
+        anchors.margins: Style.spacing.popupPadding
+        onCloseRequested: root.dismiss()
+        onTextKey: function(text) { if (text === "r" || text === "R") root.refresh() }
 
-        PanelHero {
-          id: hero
-          width: parent.width
-          title: "Unified Share"
-          meta: root.route === "quick-share" ? "Send directly to Android or Windows"
-            : (root.route === "browser" ? "Share a private link" : "LocalSend fallback")
-          detail: root.coreVersion === "" ? "" : "v" + root.coreVersion
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          iconComponent: Component {
-            Text {
-              text: "⇄"
-              color: hero.foreground
-              font.family: hero.fontFamily
-              font.pixelSize: Style.font.display
-              font.bold: true
-            }
-          }
-          trailingControl: Component {
-            Button {
-              iconText: "󰑐"
-              iconSpinning: root.loading
-              tooltipText: root.loading ? "Checking routes" : "Refresh (R)"
-              foreground: hero.foreground
-              fontFamily: hero.fontFamily
-              bordered: true
-              enabled: !root.busy
-              onClicked: root.refresh()
-            }
-          }
-        }
+        Column {
+          anchors.fill: parent
+          spacing: Style.space(14)
 
-        RowLayout {
-          width: parent.width
-          spacing: Style.space(10)
-
-          Text {
-            text: "ROUTE"
-            color: root.foreground
-            opacity: 0.65
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-            font.letterSpacing: 1.2
-          }
-
-          Item { Layout.fillWidth: true }
-
-          ButtonGroup {
-            options: [
-              { value: "quick-share", label: "Quick Share", tooltip: "Android and Windows Quick Share" },
-              { value: "browser", label: "Browser / QR", tooltip: "Works on any device on this LAN" },
-              { value: "localsend", label: "LocalSend", tooltip: "Use the installed LocalSend app" }
-            ]
-            value: root.route
+          PanelHero {
+            id: hero
+            width: parent.width
+            title: "Unified Share"
+            meta: "Share through the best available route"
+            detail: root.coreVersion === "" ? "" : "v" + root.coreVersion
             foreground: root.foreground
             fontFamily: root.fontFamily
-            enabled: !root.busy
-            onChanged: function(value) { root.selectRoute(value) }
+            iconComponent: Component {
+              Text { text: "⇄"; color: hero.foreground; font.family: hero.fontFamily; font.pixelSize: Style.font.display; font.bold: true }
+            }
+            trailingControl: Component {
+              Button {
+                iconText: "󰑐"
+                iconSpinning: root.loading
+                tooltipText: root.loading ? "Reading sharing state" : "Refresh (R)"
+                foreground: hero.foreground
+                fontFamily: hero.fontFamily
+                bordered: true
+                enabled: !root.busy
+                onClicked: root.refresh()
+              }
+            }
           }
-        }
 
-        BorderSurface {
-          width: parent.width
-          visible: root.route === "quick-share"
-          implicitHeight: quickDeviceColumn.implicitHeight + Style.space(20)
-          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
-          borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
-          radius: Style.cornerRadius
-
-          Column {
-            id: quickDeviceColumn
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.margins: Style.space(10)
-            spacing: Style.space(8)
+          BorderSurface {
+            width: parent.width
+            implicitHeight: identityRow.implicitHeight + Style.space(20)
+            color: Util.alpha(root.foreground, 0.04)
+            borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
+            radius: Style.cornerRadius
 
             RowLayout {
-              width: parent.width
-
-              Text {
+              id: identityRow
+              anchors.fill: parent
+              anchors.margins: Style.space(10)
+              spacing: Style.space(12)
+              Column {
                 Layout.fillWidth: true
-                text: discoveryProc.running ? "SCANNING FOR DEVICES…" : "QUICK SHARE DEVICES"
-                color: root.foreground
-                opacity: 0.7
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.0
+                spacing: Style.space(2)
+                Text { text: "THIS COMPUTER"; color: root.foreground; opacity: 0.62; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 1.1 }
+                Text { text: root.deviceName || "Omarchy"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body; font.bold: true }
               }
-
               Button {
-                text: discoveryProc.running ? "Scanning…" : "Scan again"
-                iconText: "󰑐"
-                iconSpinning: discoveryProc.running
+                text: "Rename"
                 bordered: true
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                enabled: !root.busy
-                onClicked: root.scanQuickShare()
-              }
-            }
-
-            Text {
-              width: parent.width
-              visible: !discoveryProc.running && root.quickDevices.length === 0
-              text: "No device found. Turn on Bluetooth, keep both devices on the same Wi-Fi, and set Android Quick Share visibility to Everyone."
-              color: root.foreground
-              opacity: 0.65
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
-            }
-
-            Repeater {
-              model: root.quickDevices
-
-              Button {
-                required property var modelData
-                width: quickDeviceColumn.width
-                text: String(modelData.name || "Unknown device") + "  ·  " + String(modelData.device_type || "device")
-                selected: root.selectedDeviceId === String(modelData.id)
-                bordered: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: {
-                  root.selectedDeviceId = String(modelData.id)
-                  root.selectedDeviceName = String(modelData.name || "Quick Share device")
-                }
+                onClicked: { settingsProc.command = [root.providerPath, "device-name"]; settingsProc.running = true }
               }
             }
           }
-        }
-
-        RowLayout {
-          width: parent.width
-          spacing: Style.space(8)
-
-          Button {
-            Layout.fillWidth: true
-            text: actionProc.running ? "Preparing…" : "Share files"
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            enabled: !root.busy && root.readyCount > 0
-              && (root.route !== "quick-share" || root.selectedDeviceId !== "")
-            onClicked: root.runAction("share-file")
-          }
-          Button {
-            Layout.fillWidth: true
-            text: "Share folder"
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            enabled: !root.busy && root.readyCount > 0 && root.route === "localsend"
-            tooltipText: root.route !== "localsend"
-              ? "Choose LocalSend to share a folder" : "Share a folder"
-            onClicked: root.runAction("share-folder")
-          }
-          Button {
-            Layout.fillWidth: true
-            text: "Clipboard"
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            enabled: !root.busy && root.readyCount > 0
-              && (root.route !== "quick-share" || root.selectedDeviceId !== "")
-            onClicked: root.runAction("share-clipboard")
-          }
-        }
-
-        Text {
-          width: parent.width
-          visible: root.noticeText !== ""
-          text: root.noticeText
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          wrapMode: Text.Wrap
-        }
-
-        Text {
-          width: parent.width
-          visible: root.errorText !== ""
-          text: root.errorText
-          color: root.urgent
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          wrapMode: Text.Wrap
-        }
-
-        BorderSurface {
-          width: parent.width
-          visible: root.shareUrl !== "" && root.route === "browser"
-          implicitHeight: activeTransfer.implicitHeight + Style.space(24)
-          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
-          borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
-          radius: Style.cornerRadius
 
           RowLayout {
-            id: activeTransfer
-            anchors.fill: parent
-            anchors.margins: Style.space(12)
-            spacing: Style.space(16)
+            width: parent.width
+            spacing: Style.space(8)
+            Button { Layout.fillWidth: true; text: "Share files"; iconText: ""; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("file") }
+            Button { Layout.fillWidth: true; text: "Share folder"; iconText: ""; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("folder") }
+            Button { Layout.fillWidth: true; text: "Clipboard"; iconText: ""; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("clipboard") }
+          }
 
-            BorderSurface {
-              Layout.preferredWidth: Style.space(172)
-              Layout.preferredHeight: Style.space(172)
-              color: "white"
-              radius: Style.space(6)
-              borderSpec: Border.flat(Qt.rgba(0, 0, 0, 0.14), 1)
-
-              Image {
-                anchors.fill: parent
-                anchors.margins: Style.space(8)
-                source: root.qrPath === "" ? "" : "file://" + root.qrPath
-                fillMode: Image.PreserveAspectFit
-                cache: false
-                visible: root.qrPath !== ""
-              }
-
-              Text {
-                anchors.centerIn: parent
-                visible: root.qrPath === ""
-                text: qrProc.running ? "Creating QR…" : "QR unavailable"
-                color: "#111111"
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
+          RowLayout {
+            width: parent.width
+            Text { Layout.fillWidth: true; text: "RECENT TRANSFERS"; color: root.foreground; opacity: 0.62; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 1.1 }
+            Button {
+              text: "View all"
+              bordered: false
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: { launchProc.command = [root.providerPath, "history"]; launchProc.running = true }
             }
+          }
 
-            ColumnLayout {
-              Layout.fillWidth: true
-              spacing: Style.space(8)
+          Text {
+            width: parent.width
+            visible: !root.loading && root.historyEntries.length === 0
+            text: "No transfers yet. History stays on this computer and never stores file paths."
+            color: root.foreground
+            opacity: 0.62
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
 
-              Text {
-                text: "BROWSER LINK ACTIVE"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-              }
-
-              Text {
-                Layout.fillWidth: true
-                text: root.shareUrl
-                color: root.foreground
-                opacity: 0.72
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WrapAnywhere
-                maximumLineCount: 3
-                elide: Text.ElideRight
-              }
-
-              Text {
-                Layout.fillWidth: true
-                text: "Scan from a device on this Wi-Fi. The private link expires automatically after 10 minutes."
-                color: root.foreground
-                opacity: 0.65
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                wrapMode: Text.WordWrap
-              }
-
-              RowLayout {
-                spacing: Style.space(8)
-
-                Button {
-                  text: "Copy link"
-                  iconText: "󰆏"
-                  bordered: true
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  enabled: !copyProc.running
-                  onClicked: root.copyLink()
-                }
-
-                Button {
-                  text: stopProc.running ? "Stopping…" : "Stop sharing"
-                  iconText: "󰓛"
-                  bordered: true
-                  foreground: root.urgent
-                  fontFamily: root.fontFamily
-                  enabled: !stopProc.running
-                  onClicked: root.stopTransfer()
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            Repeater {
+              model: root.historyEntries.slice(0, 4)
+              BorderSurface {
+                required property var modelData
+                width: parent.width
+                implicitHeight: recentRow.implicitHeight + Style.space(14)
+                color: "transparent"
+                borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
+                radius: Style.cornerRadius
+                RowLayout {
+                  id: recentRow
+                  anchors.fill: parent
+                  anchors.margins: Style.space(7)
+                  spacing: Style.space(10)
+                  Text { text: String(modelData.outcome) === "completed" ? "󰄬" : "󰅙"; color: String(modelData.outcome) === "completed" ? root.foreground : root.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.body }
+                  Text { Layout.fillWidth: true; text: String(modelData.target) + "  ·  " + Number(modelData.item_count) + " item(s)"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight }
+                  Text { text: String(modelData.route).replace(/_/g, " ").toUpperCase(); color: root.foreground; opacity: 0.55; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
                 }
               }
             }
           }
-        }
 
+          Text { width: parent.width; visible: root.errorText !== ""; text: root.errorText; color: root.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.body; wrapMode: Text.WordWrap }
+        }
       }
     }
   }

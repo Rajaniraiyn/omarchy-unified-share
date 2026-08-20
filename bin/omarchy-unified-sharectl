@@ -33,6 +33,9 @@ case "$command_name" in
   status)
     exec "$core" status --json
     ;;
+  history)
+    exec "$core" history --limit 4 --json
+    ;;
   discover)
     exec "$core" discover --timeout-seconds 8 --json
     ;;
