@@ -101,6 +101,9 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): void { root.refresh() }
+    function shareFiles(): void { root.runAction("share-file") }
+    function shareClipboard(): void { root.runAction("share-clipboard") }
+    function stopTransfer(): void { root.stopTransfer() }
   }
 
   Process {
