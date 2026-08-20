@@ -34,6 +34,15 @@ case "$command_name" in
     exec "$core" status --json
     ;;
   share-file|share-folder)
+    route=${1:-browser}
+    case "$route" in
+      browser|localsend|auto) ;;
+      *)
+        printf '%s\n' '{"schema_version":1,"ok":false,"message":"Unknown sharing route"}'
+        exit 2
+        ;;
+    esac
+
     if [[ $command_name == share-folder ]]; then
       picker_args=(--title "Share folder" --directory)
     else
@@ -47,19 +56,52 @@ case "$command_name" in
     fi
     [[ -n $picked ]] || exit 0
     readarray -t paths <<<"$picked"
-    exec "$core" share --json "${paths[@]}"
+    exec "$core" share --json --via "$route" "${paths[@]}"
     ;;
   share-clipboard)
+    route=${1:-browser}
+    case "$route" in
+      browser|localsend|auto) ;;
+      *)
+        printf '%s\n' '{"schema_version":1,"ok":false,"message":"Unknown sharing route"}'
+        exit 2
+        ;;
+    esac
+
     cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/unified-share/clipboard
     mkdir -p "$cache_dir"
     find "$cache_dir" -type f -mtime +1 -delete 2>/dev/null || true
     clipboard_file=$(mktemp --tmpdir="$cache_dir" clipboard.XXXXXX.txt)
     wl-paste >"$clipboard_file"
-    exec "$core" share --json "$clipboard_file"
+    exec "$core" share --json --via "$route" "$clipboard_file"
+    ;;
+  qr-code)
+    url=${1:-}
+    transfer_id=${2:-}
+    [[ -n $url && $transfer_id =~ ^[[:alnum:]-]+$ ]] || exit 2
+    command -v qrencode >/dev/null 2>&1 || exit 3
+    qr_dir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/unified-share/qr
+    mkdir -p -m 700 "$qr_dir"
+    find "$qr_dir" -type f -mmin +1440 -delete 2>/dev/null || true
+    qr_path=$qr_dir/$transfer_id.png
+    qrencode -m 2 -s 6 -o "$qr_path" -- "$url"
+    chmod 600 "$qr_path"
+    printf '%s\n' "$qr_path"
+    ;;
+  copy-link)
+    url=${1:-}
+    [[ -n $url ]] || exit 2
+    printf '%s' "$url" | wl-copy
+    ;;
+  stop-transfer)
+    transfer_id=${1:-}
+    [[ $transfer_id =~ ^[[:alnum:]-]+$ ]] || exit 2
+    "$core" stop --json "$transfer_id"
+    qr_path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/unified-share/qr/$transfer_id.png
+    rm -f -- "$qr_path"
     ;;
   *)
     printf 'Unknown command: %s\n' "$command_name" >&2
     exit 2
     ;;
 esac
-

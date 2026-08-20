@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "rajaniraiyn.unified-share",
   "name": "Unified Share",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Rajaniraiyn",
   "license": "MIT",
   "description": "A native Omarchy surface for capability-aware nearby file sharing.",
@@ -18,4 +18,3 @@
     "defaultSection": "right"
   }
 }
-

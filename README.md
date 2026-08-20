@@ -24,11 +24,12 @@ The development helper also discovers `~/Projects/unified-share/target/{release,
 ## Current behavior
 
 - Shows every adapter and its honest readiness state.
-- Uses the currently ready LocalSend migration adapter for files, folders, and clipboard text.
+- Creates a private, expiring Browser / QR link for files and clipboard text without requiring an app on the recipient.
+- Keeps LocalSend available as the folder-sharing and migration fallback.
+- Copies or explicitly stops an active browser link from the panel; closing the panel does not interrupt a transfer.
 - Refreshes on panel open and with `R` or the refresh control.
 - Will gain live discovery and transfer progress after the core exposes its local event socket.
 
 ## License
 
 MIT. The separate Unified Share core is GPL-3.0-only.
-

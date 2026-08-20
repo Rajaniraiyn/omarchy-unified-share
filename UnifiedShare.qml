@@ -18,6 +18,11 @@ Panel {
   property string errorText: ""
   property string noticeText: ""
   property bool loading: false
+  property string route: "browser"
+  property string shareUrl: ""
+  property string transferId: ""
+  property string qrPath: ""
+  property double expiresAtUnix: 0
 
   readonly property string helperPath: {
     var value = String(Qt.resolvedUrl("bin/omarchy-unified-sharectl"))
@@ -27,7 +32,7 @@ Panel {
   readonly property color foreground: Color.foreground
   readonly property color urgent: Color.urgent
   readonly property string fontFamily: Style.font.family
-  readonly property bool busy: loading || actionProc.running
+  readonly property bool busy: loading || actionProc.running || stopProc.running
   readonly property int readyCount: Model.readyCount(adapters)
 
   implicitWidth: button.implicitWidth
@@ -49,8 +54,30 @@ Panel {
     noticeText = ""
     actionProc.resultText = ""
     actionProc.errorResult = ""
-    actionProc.command = [helperPath, action]
+    actionProc.command = [helperPath, action, route]
     actionProc.running = true
+  }
+
+  function clearTransfer() {
+    shareUrl = ""
+    transferId = ""
+    qrPath = ""
+    expiresAtUnix = 0
+  }
+
+  function stopTransfer() {
+    if (transferId === "" || stopProc.running) return
+    stopProc.resultText = ""
+    stopProc.errorResult = ""
+    stopProc.command = [helperPath, "stop-transfer", transferId]
+    stopProc.running = true
+  }
+
+  function copyLink() {
+    if (shareUrl === "") return
+    copyProc.command = [helperPath, "copy-link", shareUrl]
+    copyProc.running = true
+    noticeText = "Link copied"
   }
 
   function updateStatus(raw) {
@@ -113,7 +140,18 @@ Panel {
       if (actionProc.resultText !== "") {
         try {
           var payload = JSON.parse(actionProc.resultText)
-          if (payload.ok) root.noticeText = payload.message || "Share opened"
+          if (payload.ok) {
+            root.noticeText = payload.message || "Share opened"
+            if (payload.url && payload.transfer_id) {
+              root.shareUrl = String(payload.url)
+              root.transferId = String(payload.transfer_id)
+              root.expiresAtUnix = Number(payload.expires_at_unix || 0)
+              root.qrPath = ""
+              qrProc.resultText = ""
+              qrProc.command = [root.helperPath, "qr-code", root.shareUrl, root.transferId]
+              qrProc.running = true
+            }
+          }
           else root.errorText = payload.message || "Could not share"
         } catch (error) {
           if (code !== 0) root.errorText = "Invalid response from Unified Share"
@@ -121,6 +159,47 @@ Panel {
       }
       if (code !== 0 && root.errorText === "" && actionProc.errorResult !== "")
         root.errorText = actionProc.errorResult
+    }
+  }
+
+
+  Process {
+    id: qrProc
+    property string resultText: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: qrProc.resultText = text.trim()
+    }
+    onExited: function(code) {
+      if (code === 0) root.qrPath = qrProc.resultText
+      else root.errorText = "The link is ready, but its QR code could not be generated"
+    }
+  }
+
+  Process {
+    id: copyProc
+  }
+
+  Process {
+    id: stopProc
+    property string resultText: ""
+    property string errorResult: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: stopProc.resultText = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: stopProc.errorResult = text.trim()
+    }
+    onExited: function(code) {
+      if (code === 0) {
+        root.clearTransfer()
+        root.noticeText = "Browser link stopped"
+      } else {
+        root.errorText = stopProc.errorResult !== ""
+          ? stopProc.errorResult : "Could not stop the browser link"
+      }
     }
   }
 
@@ -194,11 +273,40 @@ Panel {
 
         RowLayout {
           width: parent.width
+          spacing: Style.space(10)
+
+          Text {
+            text: "ROUTE"
+            color: root.foreground
+            opacity: 0.65
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.letterSpacing: 1.2
+          }
+
+          Item { Layout.fillWidth: true }
+
+          ButtonGroup {
+            options: [
+              { value: "browser", label: "Browser / QR", tooltip: "Works on any device on this LAN" },
+              { value: "localsend", label: "LocalSend", tooltip: "Use the installed LocalSend app" }
+            ]
+            value: root.route
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            enabled: !root.busy
+            onChanged: function(value) { root.route = value }
+          }
+        }
+
+        RowLayout {
+          width: parent.width
           spacing: Style.space(8)
 
           Button {
             Layout.fillWidth: true
-            text: "Share files"
+            text: actionProc.running ? "Preparing…" : "Share files"
             bordered: true
             foreground: root.foreground
             fontFamily: root.fontFamily
@@ -211,7 +319,9 @@ Panel {
             bordered: true
             foreground: root.foreground
             fontFamily: root.fontFamily
-            enabled: !root.busy && root.readyCount > 0
+            enabled: !root.busy && root.readyCount > 0 && root.route !== "browser"
+            tooltipText: root.route === "browser"
+              ? "Choose LocalSend to share a folder" : "Share a folder"
             onClicked: root.runAction("share-folder")
           }
           Button {
@@ -245,7 +355,110 @@ Panel {
           wrapMode: Text.Wrap
         }
 
+        BorderSurface {
+          width: parent.width
+          visible: root.shareUrl !== ""
+          implicitHeight: activeTransfer.implicitHeight + Style.space(24)
+          color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
+          borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
+          radius: Style.cornerRadius
+
+          RowLayout {
+            id: activeTransfer
+            anchors.fill: parent
+            anchors.margins: Style.space(12)
+            spacing: Style.space(16)
+
+            BorderSurface {
+              Layout.preferredWidth: Style.space(172)
+              Layout.preferredHeight: Style.space(172)
+              color: "white"
+              radius: Style.space(6)
+              borderSpec: Border.flat(Qt.rgba(0, 0, 0, 0.14), 1)
+
+              Image {
+                anchors.fill: parent
+                anchors.margins: Style.space(8)
+                source: root.qrPath === "" ? "" : "file://" + root.qrPath
+                fillMode: Image.PreserveAspectFit
+                cache: false
+                visible: root.qrPath !== ""
+              }
+
+              Text {
+                anchors.centerIn: parent
+                visible: root.qrPath === ""
+                text: qrProc.running ? "Creating QR…" : "QR unavailable"
+                color: "#111111"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            ColumnLayout {
+              Layout.fillWidth: true
+              spacing: Style.space(8)
+
+              Text {
+                text: "BROWSER LINK ACTIVE"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+              }
+
+              Text {
+                Layout.fillWidth: true
+                text: root.shareUrl
+                color: root.foreground
+                opacity: 0.72
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WrapAnywhere
+                maximumLineCount: 3
+                elide: Text.ElideRight
+              }
+
+              Text {
+                Layout.fillWidth: true
+                text: "Scan from a device on this Wi-Fi. The private link expires automatically after 10 minutes."
+                color: root.foreground
+                opacity: 0.65
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+
+              RowLayout {
+                spacing: Style.space(8)
+
+                Button {
+                  text: "Copy link"
+                  iconText: "󰆏"
+                  bordered: true
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: !copyProc.running
+                  onClicked: root.copyLink()
+                }
+
+                Button {
+                  text: stopProc.running ? "Stopping…" : "Stop sharing"
+                  iconText: "󰓛"
+                  bordered: true
+                  foreground: root.urgent
+                  fontFamily: root.fontFamily
+                  enabled: !stopProc.running
+                  onClicked: root.stopTransfer()
+                }
+              }
+            }
+          }
+        }
+
         Text {
+          visible: root.shareUrl === ""
           text: "AVAILABLE ROUTES"
           color: root.foreground
           opacity: 0.65
@@ -256,6 +469,7 @@ Panel {
         }
 
         Column {
+          visible: root.shareUrl === ""
           width: parent.width
           spacing: Style.space(8)
 
