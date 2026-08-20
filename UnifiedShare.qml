@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 
@@ -97,20 +98,35 @@ Item {
   Process { id: launchProc }
   Process { id: settingsProc; onExited: function(code) { if (code === 0 && root.opened) root.refresh() } }
 
-  FloatingWindow {
+  PanelWindow {
     id: window
-    title: "Omarchy Unified Share"
     visible: root.opened
-    color: Color.popups.background
-    implicitWidth: 760
-    implicitHeight: 540
-    minimumSize: Qt.size(640, 460)
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "omarchy-unified-share"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
-    onVisibleChanged: if (!visible && root.opened) root.dismiss()
-
-    FocusScope {
+    Rectangle {
       anchors.fill: parent
-      focus: true
+      color: Qt.rgba(0, 0, 0, 0.55)
+      MouseArea { anchors.fill: parent; onClicked: root.dismiss() }
+    }
+
+    BorderSurface {
+      anchors.centerIn: parent
+      width: Math.min(760, window.width - Style.space(32))
+      height: Math.min(540, window.height - Style.space(32))
+      color: Color.popups.background
+      borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
+      radius: Style.cornerRadius
+
+      MouseArea { anchors.fill: parent; onClicked: {} }
+
+      FocusScope {
+        anchors.fill: parent
+        focus: true
 
       PanelKeyCatcher {
         id: keyCatcher
@@ -234,6 +250,7 @@ Item {
 
           Text { width: parent.width; visible: root.errorText !== ""; text: root.errorText; color: root.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.body; wrapMode: Text.WordWrap }
         }
+      }
       }
     }
   }
