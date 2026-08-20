@@ -24,9 +24,9 @@ Panel {
     if (value.indexOf("file://") === 0) value = value.slice(7)
     return decodeURIComponent(value)
   }
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property color foreground: Color.foreground
+  readonly property color urgent: Color.urgent
+  readonly property string fontFamily: Style.font.family
   readonly property bool busy: loading || actionProc.running
   readonly property int readyCount: Model.readyCount(adapters)
 
