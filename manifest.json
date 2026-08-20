@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "rajaniraiyn.unified-share",
+  "name": "Unified Share",
+  "version": "0.1.0",
+  "author": "Rajaniraiyn",
+  "license": "MIT",
+  "description": "A native Omarchy surface for capability-aware nearby file sharing.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "UnifiedShare.qml"
+  },
+  "barWidget": {
+    "displayName": "Unified Share",
+    "description": "Share files through the best available native or fallback route.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
+
