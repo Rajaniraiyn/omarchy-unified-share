@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "rajaniraiyn.unified-share",
   "name": "Unified Share",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": "Rajaniraiyn",
   "license": "MIT",
   "description": "An on-demand Omarchy sharing provider with private local history.",

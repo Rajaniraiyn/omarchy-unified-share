@@ -196,9 +196,9 @@ Item {
           RowLayout {
             width: parent.width
             spacing: Style.space(8)
-            Button { Layout.fillWidth: true; text: "Share files"; iconText: ""; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("file") }
-            Button { Layout.fillWidth: true; text: "Share folder"; iconText: ""; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("folder") }
-            Button { Layout.fillWidth: true; text: "Clipboard"; iconText: ""; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("clipboard") }
+            Button { Layout.fillWidth: true; text: "Choose files"; iconText: "󰈔"; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("file") }
+            Button { Layout.fillWidth: true; text: "Choose folder"; iconText: "󰉋"; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("folder") }
+            Button { Layout.fillWidth: true; text: "Clipboard text"; iconText: "󰅌"; bordered: true; foreground: root.foreground; fontFamily: root.fontFamily; onClicked: root.launch("clipboard") }
           }
 
           RowLayout {

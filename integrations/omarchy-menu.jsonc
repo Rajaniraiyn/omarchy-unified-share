@@ -1,0 +1,40 @@
+{
+  // Merge these rows into ~/.config/omarchy/extensions/omarchy-menu.jsonc.
+  // They preserve Omarchy's stock Super+Ctrl+S binding and replace only its
+  // Share submenu actions.
+  "trigger.share.clipboard": {
+    "icon": "󰅌",
+    "label": "Clipboard text",
+    "description": "Share copied text or a copied link",
+    "action": "$HOME/.config/omarchy/plugins/rajaniraiyn.unified-share/bin/omarchy-unified-share share clipboard"
+  },
+  "trigger.share.file": {
+    "icon": "󰈔",
+    "label": "Choose files",
+    "description": "Share one or more files",
+    "action": "$HOME/.config/omarchy/plugins/rajaniraiyn.unified-share/bin/omarchy-unified-share share file"
+  },
+  "trigger.share.folder": {
+    "icon": "󰉋",
+    "label": "Choose folder",
+    "description": "Share a folder as one transfer",
+    "action": "$HOME/.config/omarchy/plugins/rajaniraiyn.unified-share/bin/omarchy-unified-share share folder"
+  },
+  "trigger.share.receive": {
+    "icon": "󰇚",
+    "label": "Receive files",
+    "description": "Open LocalSend compatibility receiver",
+    "action": "uwsm-app -- localsend"
+  },
+  "trigger.share.history": {
+    "icon": "󰋚",
+    "label": "Recent transfers",
+    "action": "$HOME/.config/omarchy/plugins/rajaniraiyn.unified-share/bin/omarchy-unified-share history"
+  },
+  "trigger.share.device-name": {
+    "icon": "",
+    "label": "Sharing preferences",
+    "description": "Computer name, scan time, and link lifetime",
+    "action": "$HOME/.config/omarchy/plugins/rajaniraiyn.unified-share/bin/omarchy-unified-share settings"
+  }
+}

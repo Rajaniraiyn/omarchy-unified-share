@@ -2,6 +2,7 @@
 set -euo pipefail
 
 self_path=$(realpath "$0")
+omarchy_settings=${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/unified-share.json
 
 find_core() {
   if command -v unified-share >/dev/null 2>&1; then
@@ -18,7 +19,40 @@ find_core() {
 }
 
 notify() {
-  omarchy-notification-send -g "" "$1" "$2" >/dev/null 2>&1 || true
+  omarchy-notification-send -g "" "$@" >/dev/null 2>&1 || true
+}
+
+read_omarchy_setting() {
+  local key=$1 fallback=$2 minimum=$3 maximum=$4 value
+  value=$(jq -er --arg key "$key" '.[$key] | numbers | floor' "$omarchy_settings" 2>/dev/null || printf '%s' "$fallback")
+  if ((value < minimum || value > maximum)); then
+    value=$fallback
+  fi
+  printf '%s\n' "$value"
+}
+
+write_omarchy_setting() {
+  local key=$1 value=$2 settings_dir temporary
+  settings_dir=$(dirname "$omarchy_settings")
+  mkdir -p -m 700 "$settings_dir"
+  temporary=$(mktemp --tmpdir="$settings_dir" unified-share.XXXXXX.json)
+  if [[ -s $omarchy_settings ]]; then
+    jq --arg key "$key" --argjson value "$value" '.[$key] = $value' "$omarchy_settings" >"$temporary"
+  else
+    jq -n --arg key "$key" --argjson value "$value" '{($key): $value}' >"$temporary"
+  fi
+  chmod 600 "$temporary"
+  mv -f -- "$temporary" "$omarchy_settings"
+}
+
+acquire_ui_lock() {
+  local runtime_dir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/unified-share
+  mkdir -p -m 700 "$runtime_dir"
+  exec 9>"$runtime_dir/omarchy-ui.lock"
+  if ! flock -n 9; then
+    notify "Sharing is already open" "Finish or cancel the current sharing window first."
+    exit 0
+  fi
 }
 
 pick_paths() {
@@ -78,13 +112,16 @@ stage_directories() {
 send_transfer() {
   local route=$1 device_id=$2 device_name=$3
   shift 3
-  local core result status=0 message url
+  local core result status=0 message url transfer_id qr_dir qr_path link_timeout
   core=$(find_core) || { notify "Unified Share unavailable" "Build or install the Unified Share core first."; exit 1; }
   local -a paths=("$@") staged share_args
   mapfile -t staged < <(stage_directories "$route" "${paths[@]}")
   share_args=(share --json --via "$route")
   if [[ $route == quick-share ]]; then
     share_args+=(--device "$device_id" --device-name "$device_name")
+  elif [[ $route == browser ]]; then
+    link_timeout=$(read_omarchy_setting link_timeout_seconds 600 30 86400)
+    share_args+=(--timeout-seconds "$link_timeout")
   fi
   result=$("$core" "${share_args[@]}" "${staged[@]}" 2> >(
     while IFS= read -r line; do
@@ -101,20 +138,33 @@ send_transfer() {
   url=$(jq -r '.url // empty' <<<"$result")
   if [[ -n $url ]]; then
     printf '%s' "$url" | wl-copy
-    notify "Sharing link copied" "Paste the private link on a device connected to this Wi-Fi."
+    transfer_id=$(jq -r '.transfer_id // empty' <<<"$result")
+    if command -v qrencode >/dev/null 2>&1 && [[ -n $transfer_id ]]; then
+      qr_dir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/unified-share/qr
+      mkdir -p -m 700 "$qr_dir"
+      find "$qr_dir" -type f -mmin +1440 -delete 2>/dev/null || true
+      qr_path=$qr_dir/$transfer_id.png
+      qrencode -m 2 -s 8 -o "$qr_path" -- "$url"
+      chmod 600 "$qr_path"
+      notify "Scan to receive" "Private Wi-Fi link copied · click the QR code to enlarge" \
+        -t 30000 --image "$qr_path" --exec "$(printf 'imv %q' "$qr_path")"
+    else
+      notify "Sharing link copied" "Paste it on a device connected to this Wi-Fi."
+    fi
   else
     notify "Shared" "$message"
   fi
 }
 
 choose_quick_share_device() {
-  local core discovery selection label device_id device_name index
+  local core discovery selection label device_id device_name index discovery_seconds
   local -a paths=("$@") options device_ids device_names option_labels
   core=$(find_core) || { notify "Unified Share unavailable" "Build or install the Unified Share core first."; exit 1; }
 
   while true; do
     notify "Quick Share" "Looking for nearby Android and Windows devices…"
-    discovery=$("$core" discover --timeout-seconds 4 --json 2>/dev/null || printf '%s' '{"devices":[]}' )
+    discovery_seconds=$(read_omarchy_setting discovery_seconds 3 1 15)
+    discovery=$("$core" discover --timeout-seconds "$discovery_seconds" --json 2>/dev/null || printf '%s' '{"devices":[]}' )
     options=()
     device_ids=()
     device_names=()
@@ -136,13 +186,19 @@ choose_quick_share_device() {
     if ((${#device_ids[@]} == 0)); then
       selection=$(omarchy-menu-select "No nearby devices found" \
         "󰑐"$'\t'"Scan again"$'\t'"Make the receiving device visible, then retry" \
-        "󰌷"$'\t'"Copy sharing link"$'\t'"Works in a browser on this Wi-Fi" \
+        "󰐲"$'\t'"Show QR code"$'\t'"Bypasses Quick Share visibility and contacts" \
+        ""$'\t'"Use LocalSend"$'\t'"Compatibility fallback" \
         "󰁍"$'\t'"Back"$'\t'"Choose another sharing method" \
         -- --width 590) || return 1
       case ${selection%%$'\t'*} in
         "Scan again") continue ;;
-        "Copy sharing link")
+        "Show QR code")
           send_transfer browser "" "" "${paths[@]}"
+          return
+          ;;
+        "Use LocalSend")
+          systemd-run --user --quiet --collect \
+            "$self_path" send local-send "" "" "${paths[@]}"
           return
           ;;
         *) return 1 ;;
@@ -181,20 +237,20 @@ choose_route() {
 
   while true; do
     selection=$(omarchy-menu-select "Share $count_label" \
-      "󰀲"$'\t'"Nearby device"$'\t'"Android and Windows Quick Share" \
-      "󰌷"$'\t'"Copy sharing link"$'\t'"Any browser on the same Wi-Fi" \
-      "󰒍"$'\t'"LocalSend fallback"$'\t'"Use the installed LocalSend app" \
+      "󰀲"$'\t'"Quick Share device"$'\t'"Nearby Android or Windows" \
+      "󰐲"$'\t'"QR code or private link"$'\t'"iPhone, Android, Mac, Windows, or Linux" \
+      ""$'\t'"LocalSend device"$'\t'"Compatibility fallback" \
       -- --width 590) || exit 0
     label=${selection%%$'\t'*}
     case $label in
-      "Nearby device")
+      "Quick Share device")
         choose_quick_share_device "${paths[@]}" && return
         ;;
-      "Copy sharing link")
+      "QR code or private link")
         send_transfer browser "" "" "${paths[@]}"
         return
         ;;
-      "LocalSend fallback")
+      "LocalSend device")
         systemd-run --user --quiet --collect \
           "$self_path" send local-send "" "" "${paths[@]}"
         return
@@ -228,10 +284,53 @@ set_device_name() {
   notify "Unified Share" "This computer now appears as $value"
 }
 
+show_settings() {
+  local selection label discovery_seconds link_timeout link_label
+  while true; do
+    discovery_seconds=$(read_omarchy_setting discovery_seconds 3 1 15)
+    link_timeout=$(read_omarchy_setting link_timeout_seconds 600 30 86400)
+    if ((link_timeout % 3600 == 0)); then
+      link_label="$((link_timeout / 3600)) hour(s)"
+    else
+      link_label="$((link_timeout / 60)) minutes"
+    fi
+    selection=$(omarchy-menu-select "Sharing preferences" \
+      "󰛋"$'\t'"Computer name"$'\t'"How this computer appears to nearby devices" \
+      "󰑐"$'\t'"Quick Share scan"$'\t'"${discovery_seconds} seconds" \
+      "󰔚"$'\t'"QR/link lifetime"$'\t'"$link_label" \
+      -- --width 590) || return
+    label=${selection%%$'\t'*}
+    case $label in
+      "Computer name") set_device_name ;;
+      "Quick Share scan")
+        selection=$(omarchy-menu-select "Quick Share scan time" \
+          "󰔛"$'\t'"3 seconds"$'\t'"Fast" \
+          "󰔜"$'\t'"5 seconds"$'\t'"Balanced" \
+          "󰔝"$'\t'"8 seconds"$'\t'"More time to discover devices" \
+          -- --width 560) || continue
+        write_omarchy_setting discovery_seconds "${selection%% *}"
+        ;;
+      "QR/link lifetime")
+        selection=$(omarchy-menu-select "Private link lifetime" \
+          "󰔛"$'\t'"10 minutes"$'\t'"Recommended for quick transfers" \
+          "󰔜"$'\t'"30 minutes"$'\t'"More time for several devices" \
+          "󰔝"$'\t'"1 hour"$'\t'"Keep the link available longer" \
+          -- --width 580) || continue
+        case ${selection%%$'\t'*} in
+          "10 minutes") write_omarchy_setting link_timeout_seconds 600 ;;
+          "30 minutes") write_omarchy_setting link_timeout_seconds 1800 ;;
+          "1 hour") write_omarchy_setting link_timeout_seconds 3600 ;;
+        esac
+        ;;
+    esac
+  done
+}
+
 command_name=${1:-share}
 shift || true
 case "$command_name" in
   share)
+    acquire_ui_lock
     mode=${1:-file}
     shift || true
     mapfile -t selected_paths < <(pick_paths "$mode" "$@")
@@ -242,13 +341,19 @@ case "$command_name" in
     send_transfer "$@"
     ;;
   history)
+    acquire_ui_lock
     show_history
     ;;
   device-name)
+    acquire_ui_lock
     set_device_name
     ;;
+  settings)
+    acquire_ui_lock
+    show_settings
+    ;;
   *)
-    printf 'Usage: %s <share|send|history|device-name>\n' "$0" >&2
+    printf 'Usage: %s <share|send|history|device-name|settings>\n' "$0" >&2
     exit 2
     ;;
 esac
