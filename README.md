@@ -23,12 +23,12 @@ The development helper also discovers `~/Projects/unified-share/target/{release,
 
 ## Current behavior
 
-- Shows every adapter and its honest readiness state.
-- Creates a private, expiring Browser / QR link for files and clipboard text without requiring an app on the recipient.
-- Keeps LocalSend available as the folder-sharing and migration fallback.
-- Copies or explicitly stops an active browser link from the panel; closing the panel does not interrupt a transfer.
-- Refreshes on panel open and with `R` or the refresh control.
-- Will gain live discovery and transfer progress after the core exposes its local event socket.
+- Opens on Quick Share and scans for visible Android or Windows recipients.
+- Keeps Browser / QR and LocalSend as explicit fallback routes instead of mixing their state into the main flow.
+- Closes before the native file picker appears, then reopens as soon as selection completes.
+- Streams the Quick Share confirmation code into the panel while consent is pending.
+- Creates private, expiring Browser / QR links and can stop an active link early.
+- Runs discovery and transfer work only on demand; the panel does not add a background sharing daemon.
 
 ## License
 
