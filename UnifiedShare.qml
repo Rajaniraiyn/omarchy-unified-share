@@ -18,7 +18,7 @@ Panel {
   property string errorText: ""
   property string noticeText: ""
   property bool loading: false
-  property string route: "browser"
+  property string route: "quick-share"
   property string shareUrl: ""
   property string transferId: ""
   property string qrPath: ""
@@ -79,6 +79,15 @@ Panel {
     discoveryProc.errorResult = ""
     discoveryProc.command = [helperPath, "discover"]
     discoveryProc.running = true
+  }
+
+  function selectRoute(value) {
+    if (route === value) return
+    clearTransfer()
+    errorText = ""
+    noticeText = ""
+    route = value
+    if (value === "quick-share") scanQuickShare()
   }
 
   function clearTransfer() {
@@ -156,7 +165,12 @@ Panel {
     }
   }
 
-  onOpenedChanged: if (opened) refresh()
+  onOpenedChanged: if (opened) {
+    refresh()
+    if (route === "quick-share" && quickDevices.length === 0
+        && !discoveryProc.running && !actionProc.running)
+      scanQuickShare()
+  }
 
   IpcHandler {
     target: "rajaniraiyn.unified-share"
@@ -306,7 +320,9 @@ Panel {
     focusTarget: keyCatcher
     centerOnBar: true
     contentWidth: panel.fittedContentWidth(Style.space(620))
-    contentHeight: panel.cappedContentHeight(Style.space(540))
+    contentHeight: panel.cappedContentHeight(
+      root.route === "quick-share" ? Style.space(360)
+        : (root.shareUrl !== "" ? Style.space(470) : Style.space(250)))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -325,8 +341,8 @@ Panel {
           id: hero
           width: parent.width
           title: "Unified Share"
-          meta: root.loading ? "Checking available routes"
-            : root.readyCount + " ready route" + (root.readyCount === 1 ? "" : "s")
+          meta: root.route === "quick-share" ? "Send directly to Android or Windows"
+            : (root.route === "browser" ? "Share a private link" : "LocalSend fallback")
           detail: root.coreVersion === "" ? "" : "v" + root.coreVersion
           foreground: root.foreground
           fontFamily: root.fontFamily
@@ -379,10 +395,7 @@ Panel {
             foreground: root.foreground
             fontFamily: root.fontFamily
             enabled: !root.busy
-            onChanged: function(value) {
-              root.route = value
-              if (value === "quick-share") root.scanQuickShare()
-            }
+            onChanged: function(value) { root.selectRoute(value) }
           }
         }
 
@@ -518,7 +531,7 @@ Panel {
 
         BorderSurface {
           width: parent.width
-          visible: root.shareUrl !== ""
+          visible: root.shareUrl !== "" && root.route === "browser"
           implicitHeight: activeTransfer.implicitHeight + Style.space(24)
           color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
           borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
@@ -618,75 +631,6 @@ Panel {
           }
         }
 
-        Text {
-          visible: root.shareUrl === "" && root.route !== "quick-share"
-          text: "AVAILABLE ROUTES"
-          color: root.foreground
-          opacity: 0.65
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          font.bold: true
-          font.letterSpacing: 1.2
-        }
-
-        Column {
-          visible: root.shareUrl === "" && root.route !== "quick-share"
-          width: parent.width
-          spacing: Style.space(8)
-
-          Repeater {
-            model: root.adapters
-
-            BorderSurface {
-              required property var modelData
-              width: parent.width
-              implicitHeight: adapterRow.implicitHeight + Style.space(20)
-              color: "transparent"
-              borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
-              radius: Style.cornerRadius
-
-              RowLayout {
-                id: adapterRow
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                anchors.margins: Style.space(10)
-                spacing: Style.space(12)
-
-                Column {
-                  Layout.fillWidth: true
-                  spacing: Style.space(2)
-
-                  Text {
-                    text: String(modelData.name || "Unknown route")
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: true
-                  }
-                  Text {
-                    width: parent.width
-                    text: String(modelData.detail || "")
-                    color: root.foreground
-                    opacity: 0.65
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    elide: Text.ElideRight
-                  }
-                }
-
-                Text {
-                  text: Model.stateLabel(modelData.state)
-                  color: Model.stateColor(modelData.state, root.foreground, root.foreground, root.urgent)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  font.letterSpacing: 0.8
-                }
-              }
-            }
-          }
-        }
       }
     }
   }
