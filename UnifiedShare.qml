@@ -26,7 +26,6 @@ Panel {
   }
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color accent: foreground
   readonly property color dim: Qt.darker(foreground, 1.45)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property bool busy: loading || actionProc.running
@@ -231,7 +230,7 @@ Panel {
           width: parent.width
           visible: root.noticeText !== ""
           text: root.noticeText
-          color: root.accent
+          color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           wrapMode: Text.Wrap
@@ -268,7 +267,7 @@ Panel {
               width: parent.width
               implicitHeight: adapterRow.implicitHeight + Style.space(20)
               color: "transparent"
-              borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
+              borderSpec: Border.controlSpec("normal", root.foreground, root.foreground)
               radius: Style.cornerRadius
 
               RowLayout {
@@ -302,7 +301,7 @@ Panel {
 
                 Text {
                   text: Model.stateLabel(modelData.state)
-                  color: Model.stateColor(modelData.state, root.foreground, root.accent, root.urgent)
+                  color: Model.stateColor(modelData.state, root.foreground, root.foreground, root.urgent)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
